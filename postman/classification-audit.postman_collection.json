@@ -1,0 +1,474 @@
+{
+  "info": {
+    "name": "RCG Adobe Analytics - Classification Audit",
+    "_postman_id": "d4e1a6a0-9f3a-4b7d-9a10-classification-audit",
+    "description": "Checks whether the classified variables from the SDR (evar13, evar14, evar26, evar32, evar38, evar52, evar58, evar66, evar69, evar70, evar77, evar87, listvar2, prop55, evar62, evar50, tntbase) on report suite {{rsid}} actually have classification data flowing, and surfaces the live '# of Attributes' (classification columns) for each so you can diff them against the SDR yourself.\n\nRun folder 1 first (once per session, tokens expire), then work through folders 2-4 top to bottom. Each request's Tests tab logs what it found to the Postman Console (View > Show Postman Console) - that's where the actual audit output shows up, not just the response body.\n\nIMPORTANT CAVEAT: the exact JSON field names returned by /classifications/datasets/compatibilityMetrics/{rsid} and /classifications/datasets/{datasetId} are not publicly documented in detail and could not be verified live from this session (no credentials/network access to Adobe here). The test scripts try several likely field names and fall back to dumping the raw response so you can see the actual shape on first run - if the auto-match logs 'no match', open the response body, find the real field names, and adjust the TARGET_VARS matching block (clearly marked) in that request's Tests tab.\n\nAlso worth checking as part of this audit: evar66 and evar70 do not appear at all in the current live /dimensions list for this account (only evar65/evar67 and prop70 exist nearby) - that's already a candidate finding (removed/renamed/never implemented) worth confirming against the SDR before you even check classification flow on them.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Auth",
+      "item": [
+        {
+          "name": "1.1 Get IMS Access Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "grant_type", "value": "client_credentials", "type": "text" },
+                { "key": "client_id", "value": "{{client_id}}", "type": "text" },
+                { "key": "client_secret", "value": "{{client_secret}}", "type": "text" },
+                { "key": "scope", "value": "{{scopes}}", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{ims_token_url}}",
+              "host": ["{{ims_token_url}}"]
+            },
+            "description": "OAuth Server-to-Server client_credentials grant. Mirrors src/adobe_analytics/auth.py in this repo."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "pm.test('Got access_token', () => pm.expect(data.access_token).to.be.a('string'));",
+                  "if (data.access_token) {",
+                  "    pm.environment.set('access_token', data.access_token);",
+                  "    console.log('[Auth] access_token saved (expires_in ms):', data.expires_in);",
+                  "} else {",
+                  "    console.log('[Auth] FAILED:', JSON.stringify(data));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.2 Discover Global Company ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "x-api-key", "value": "{{client_id}}" },
+              { "key": "x-gw-ims-org-id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{analytics_base_url}}/discovery/me",
+              "host": ["{{analytics_base_url}}"],
+              "path": ["discovery", "me"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "let companyId = null;",
+                  "(data.imsOrgs || []).forEach(org => {",
+                  "    (org.companies || []).forEach(c => {",
+                  "        if (!companyId && c.globalCompanyId) companyId = c.globalCompanyId;",
+                  "    });",
+                  "});",
+                  "pm.test('Found a globalCompanyId', () => pm.expect(companyId).to.not.be.null);",
+                  "if (companyId) {",
+                  "    pm.environment.set('globalCompanyId', companyId);",
+                  "    console.log('[Auth] globalCompanyId saved:', companyId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Classification Schema & Attribute Counts",
+      "description": "Pulls the classification dataset(s) tied to {{rsid}} and, for the ones matching our target variable list, surfaces the current attribute (classification column) count to diff against the SDR.",
+      "item": [
+        {
+          "name": "2.1 List Classification Datasets for Report Suite",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "x-api-key", "value": "{{client_id}}" },
+              { "key": "x-gw-ims-org-id", "value": "{{org_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{analytics_base_url}}/api/{{globalCompanyId}}/classifications/datasets/compatibilityMetrics/{{rsid}}",
+              "host": ["{{analytics_base_url}}"],
+              "path": ["api", "{{globalCompanyId}}", "classifications", "datasets", "compatibilityMetrics", "{{rsid}}"]
+            },
+            "description": "Real endpoint (confirmed from the aanalytics2 Python library source, since Adobe's own guide page doesn't spell out the path): GET /classifications/datasets/compatibilityMetrics/{rsid}. Returns every classification dataset associated with this report suite."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// ---- TARGET_VARS matching block: adjust field names here if auto-match fails ----",
+                  "const TARGET_VARS = ['evar13','evar14','evar26','evar32','evar38','evar52','evar58','evar66',",
+                  "                     'evar69','evar70','evar77','evar87','listvar2','prop55','evar62','evar50','tntbase'];",
+                  "",
+                  "let data;",
+                  "try { data = pm.response.json(); } catch (e) { data = null; }",
+                  "pm.environment.set('classificationDatasetsRaw', JSON.stringify(data));",
+                  "",
+                  "const list = Array.isArray(data) ? data : (data && (data.content || data.datasets)) || [];",
+                  "console.log('[Classifications] dataset count returned:', list.length);",
+                  "",
+                  "function shortCode(item) {",
+                  "    return item.name || item.sourceFieldName || item.variable || item.dimension || item.source || '';",
+                  "}",
+                  "function attrCount(item) {",
+                  "    const cols = item.columns || item.schema || item.fields || item.attributes;",
+                  "    return Array.isArray(cols) ? cols.length : undefined;",
+                  "}",
+                  "",
+                  "const matched = [];",
+                  "list.forEach(item => {",
+                  "    const code = String(shortCode(item)).toLowerCase();",
+                  "    const hit = TARGET_VARS.find(v => code.includes(v.toLowerCase()));",
+                  "    if (hit) matched.push({ targetVar: hit, datasetId: item.id || item.dsid || item.datasetId, rawName: shortCode(item), attributeCount: attrCount(item) });",
+                  "});",
+                  "",
+                  "if (matched.length === 0 && list.length > 0) {",
+                  "    console.log('[Classifications] NO auto-match against TARGET_VARS - field names differ from what this script guessed.');",
+                  "    console.log('[Classifications] Inspect one raw item below and adjust shortCode()/attrCount() in this Tests script:');",
+                  "    console.log(JSON.stringify(list[0], null, 2));",
+                  "} else {",
+                  "    console.log('[Classifications] Matched target-variable datasets:');",
+                  "    console.log(JSON.stringify(matched, null, 2));",
+                  "}",
+                  "pm.environment.set('matchedDatasetsSummary', JSON.stringify(matched));",
+                  "",
+                  "const foundVars = matched.map(m => m.targetVar);",
+                  "const missing = TARGET_VARS.filter(v => !foundVars.includes(v));",
+                  "if (missing.length) {",
+                  "    console.log('[Classifications] Target variables with NO classification dataset found for this rsid (or match script needs tuning):', missing.join(', '));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.2 Get Classification Dataset Detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "x-api-key", "value": "{{client_id}}" },
+              { "key": "x-gw-ims-org-id", "value": "{{org_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{analytics_base_url}}/api/{{globalCompanyId}}/classifications/datasets/{{datasetId}}",
+              "host": ["{{analytics_base_url}}"],
+              "path": ["api", "{{globalCompanyId}}", "classifications", "datasets", "{{datasetId}}"]
+            },
+            "description": "Run once per matched dataset: copy a datasetId out of `matchedDatasetsSummary` (set by 2.1) into the `datasetId` environment variable first, then send this. Full schema for that one dataset, including its classification columns (= attributes)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data; try { data = pm.response.json(); } catch (e) { data = null; }",
+                  "const cols = data && (data.columns || data.schema || data.fields || data.attributes);",
+                  "console.log('[Classifications] datasetId', pm.environment.get('datasetId'), '-> attribute/column count:', Array.isArray(cols) ? cols.length : 'unknown (inspect response body, adjust field name above)');",
+                  "if (Array.isArray(cols)) console.log(JSON.stringify(cols.map(c => c.name || c.title || c), null, 2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.3 Get Classification Dataset Template (column headers)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "x-api-key", "value": "{{client_id}}" },
+              { "key": "x-gw-ims-org-id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{analytics_base_url}}/api/{{globalCompanyId}}/classifications/datasets/template/{{datasetId}}",
+              "host": ["{{analytics_base_url}}"],
+              "path": ["api", "{{globalCompanyId}}", "classifications", "datasets", "template", "{{datasetId}}"]
+            },
+            "description": "Returns the TSV import template for the dataset in `datasetId`. The header row is an independent, format-level confirmation of the attribute count/names (useful if 2.2's JSON field names don't pan out)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const text = pm.response.text();",
+                  "const headerLine = (text || '').split(/\\r?\\n/)[0] || '';",
+                  "const cols = headerLine.split('\\t').filter(Boolean);",
+                  "console.log('[Classifications] template columns for datasetId', pm.environment.get('datasetId'), '- count:', cols.length);",
+                  "console.log(cols.join(' | '));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Data Flow Check (Reporting)",
+      "description": "Confirms whether real, classified values are actually returned in reports for the target variables - not just whether a classification schema exists.",
+      "item": [
+        {
+          "name": "3.1 List Dimensions and Find Classification Children",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "x-api-key", "value": "{{client_id}}" },
+              { "key": "x-gw-ims-org-id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{analytics_base_url}}/api/{{globalCompanyId}}/dimensions?rsid={{rsid}}",
+              "host": ["{{analytics_base_url}}"],
+              "path": ["api", "{{globalCompanyId}}", "dimensions"],
+              "query": [{ "key": "rsid", "value": "{{rsid}}" }]
+            },
+            "description": "Standard Dimensions API. Classification-derived dimensions show up here with a `parent` field pointing at the base variable (e.g. parent = 'variables/evar14'). We filter client-side for our target variables since there's no documented server-side 'classified only' filter."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const TARGET_VAR_IDS = ['evar13','evar14','evar26','evar32','evar38','evar52','evar58','evar66',",
+                  "  'evar69','evar70','evar77','evar87','prop55','evar62','evar50','tntbase'].map(v => 'variables/' + v)",
+                  "  .concat(['variables/listvariable2']); // listvar2 shorthand -> real id",
+                  "",
+                  "let data; try { data = pm.response.json(); } catch (e) { data = null; }",
+                  "const list = Array.isArray(data) ? data : (data && data.content) || [];",
+                  "console.log('[Dimensions] total dimensions returned for rsid', pm.environment.get('rsid'), ':', list.length);",
+                  "",
+                  "const children = list.filter(d => d.parent && TARGET_VAR_IDS.includes(d.parent));",
+                  "console.log('[Dimensions] classification child-dimensions found for target vars:', children.length);",
+                  "console.log(JSON.stringify(children.map(d => ({ id: d.id, title: d.title, parent: d.parent })), null, 2));",
+                  "",
+                  "const parentsWithChildren = [...new Set(children.map(d => d.parent))];",
+                  "const parentsMissing = TARGET_VAR_IDS.filter(v => !parentsWithChildren.includes(v));",
+                  "if (parentsMissing.length) {",
+                  "    console.log('[Dimensions] Target variables with NO classification child-dimension in /dimensions (schema may exist but nothing reportable, or var no longer exists):', parentsMissing.join(', '));",
+                  "}",
+                  "pm.environment.set('matchedClassificationDims', JSON.stringify(children));",
+                  "if (children.length) pm.environment.set('classificationDimensionId', children[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.2 Report - Breakdown by Classification Dimension (last 90 days)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "x-api-key", "value": "{{client_id}}" },
+              { "key": "x-gw-ims-org-id", "value": "{{org_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rsid\": \"{{rsid}}\",\n  \"globalFilters\": [\n    { \"type\": \"dateRange\", \"dateRange\": \"{{dateRangeStart}}/{{dateRangeEnd}}\" }\n  ],\n  \"metricContainer\": {\n    \"metrics\": [ { \"id\": \"metrics/visits\" } ]\n  },\n  \"dimension\": \"{{classificationDimensionId}}\",\n  \"settings\": {\n    \"limit\": 50,\n    \"countRepeatInstances\": true,\n    \"nonesBehavior\": \"return-nones\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{analytics_base_url}}/api/{{globalCompanyId}}/reports",
+              "host": ["{{analytics_base_url}}"],
+              "path": ["api", "{{globalCompanyId}}", "reports"]
+            },
+            "description": "Set `classificationDimensionId` first (3.1 auto-fills it with the first match found - overwrite it to check each of the target variables' classification dimensions in turn, one request per id). If most/all rows come back as unspecified/blank while `metrics/visits` volume is non-trivial, classification data is NOT flowing for that variable in this window."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const end = new Date();",
+                  "const start = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);",
+                  "const iso = d => d.toISOString().replace(/\\.\\d+Z$/, '.000Z');",
+                  "pm.environment.set('dateRangeStart', iso(start));",
+                  "pm.environment.set('dateRangeEnd', iso(end));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data; try { data = pm.response.json(); } catch (e) { data = null; }",
+                  "const rows = (data && data.rows) || [];",
+                  "const dimId = pm.environment.get('classificationDimensionId');",
+                  "const unspecified = rows.filter(r => !r.value || /unspecified|^\\(none\\)$/i.test(r.value));",
+                  "const real = rows.length - unspecified.length;",
+                  "console.log('[DataFlow] dimension', dimId, '- rows:', rows.length, '| real classified values:', real, '| unspecified/blank:', unspecified.length);",
+                  "if (rows.length === 0) {",
+                  "    console.log('[DataFlow] No rows at all in the last 90 days for', dimId, '- either no traffic matched, or check the dimension id / response for an error.');",
+                  "} else if (real === 0) {",
+                  "    console.log('[DataFlow] WARNING: every row for', dimId, 'is unspecified/blank - classification data does not appear to be flowing.');",
+                  "} else {",
+                  "    console.log('[DataFlow] OK: classification data is flowing for', dimId);",
+                  "    console.log(JSON.stringify(rows.slice(0, 5).map(r => ({ value: r.value, visits: (r.data || [])[0] })), null, 2));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Confirm via Export (optional, heavier proof)",
+      "description": "Round-trips the actual key -> classified-value data via the Classification Rule Builder export job flow, rather than inferring from reporting breakdowns. Slower (async job), but it's the most direct evidence of live classification data. Run 4.1, then poll 4.2 until status is done, then 4.3 to find the file, then 4.4 to read it.",
+      "item": [
+        {
+          "name": "4.1 Create Classification Export Job",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "x-api-key", "value": "{{client_id}}" },
+              { "key": "x-gw-ims-org-id", "value": "{{org_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dataFormat\": \"json\",\n  \"encoding\": \"UTF8\",\n  \"jobName\": \"aanalyticsapi-classification-audit\",\n  \"listDelimiter\": \",\",\n  \"source\": \"Direct API Upload\",\n  \"rowLimit\": 20,\n  \"offset\": 0\n}"
+            },
+            "url": {
+              "raw": "{{analytics_base_url}}/api/{{globalCompanyId}}/classifications/job/export/{{datasetId}}",
+              "host": ["{{analytics_base_url}}"],
+              "path": ["api", "{{globalCompanyId}}", "classifications", "job", "export", "{{datasetId}}"]
+            },
+            "description": "Uses whatever `datasetId` is currently set (from folder 2). rowLimit kept small (20) since this is just a flow check, not a full export."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data; try { data = pm.response.json(); } catch (e) { data = null; }",
+                  "const jobId = data && (data.id || data.jobId);",
+                  "if (jobId) { pm.environment.set('jobId', jobId); console.log('[Export] jobId saved:', jobId); }",
+                  "else console.log('[Export] Could not find a job id in response:', JSON.stringify(data));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.2 Get Export Job Status (poll until done)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "x-api-key", "value": "{{client_id}}" },
+              { "key": "x-gw-ims-org-id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{analytics_base_url}}/api/{{globalCompanyId}}/classifications/job/{{jobId}}",
+              "host": ["{{analytics_base_url}}"],
+              "path": ["api", "{{globalCompanyId}}", "classifications", "job", "{{jobId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data; try { data = pm.response.json(); } catch (e) { data = null; }",
+                  "console.log('[Export] job status:', data && (data.status || data.state), '- re-send this request until it reads completed/done_processing.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.3 List Export Files",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "x-api-key", "value": "{{client_id}}" },
+              { "key": "x-gw-ims-org-id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{analytics_base_url}}/api/{{globalCompanyId}}/classifications/job/export/file/{{jobId}}/list",
+              "host": ["{{analytics_base_url}}"],
+              "path": ["api", "{{globalCompanyId}}", "classifications", "job", "export", "file", "{{jobId}}", "list"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data; try { data = pm.response.json(); } catch (e) { data = null; }",
+                  "console.log('[Export] files available:', JSON.stringify(data));",
+                  "const first = Array.isArray(data) ? data[0] : (data && data.files && data.files[0]);",
+                  "if (first) { pm.environment.set('fileName', typeof first === 'string' ? first : (first.name || first.fileName)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.4 Get Export File Contents",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "x-api-key", "value": "{{client_id}}" },
+              { "key": "x-gw-ims-org-id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{analytics_base_url}}/api/{{globalCompanyId}}/classifications/job/export/file/{{jobId}}/{{fileName}}",
+              "host": ["{{analytics_base_url}}"],
+              "path": ["api", "{{globalCompanyId}}", "classifications", "job", "export", "file", "{{jobId}}", "{{fileName}}"]
+            },
+            "description": "This is the ground truth: actual key -> classified-value rows currently on file for the dataset. Non-empty, non-null values here are definitive proof classification data is flowing; an empty/all-null export is definitive proof it is not (for the rows sampled)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data; try { data = pm.response.json(); } catch (e) { data = pm.response.text(); }",
+                  "console.log('[Export] sample rows:', JSON.stringify(data, null, 2).slice(0, 2000));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

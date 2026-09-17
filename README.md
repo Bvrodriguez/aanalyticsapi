@@ -61,3 +61,9 @@ report = client.run_report({
   automatically shortly before they expire.
 - If you already know your Global Company ID, set `ADOBE_GLOBAL_COMPANY_ID` in `.env` to skip
   the discovery call.
+
+## Classification audit (Postman)
+
+`postman/` has a Postman collection + environment for auditing whether specific
+classified variables actually have classification data flowing, and for pulling live
+"# of Attributes" counts to diff against the SDR. See `postman/README.md`.
