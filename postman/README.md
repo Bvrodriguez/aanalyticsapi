@@ -21,10 +21,13 @@ and surfaces the live "# of Attributes" per variable so it can be diffed against
 1. **1. Auth** — run both requests once per session (tokens expire); everything else
    reuses the saved `access_token` / `globalCompanyId`.
 2. **2. Classification Schema & Attribute Counts** — 2.1 lists every classification
-   dataset on the report suite and tries to match them to the target variable list,
-   logging a summary (including live attribute/column counts) to the Postman Console.
-   Copy a matched `datasetId` into the environment variable of the same name, then run
-   2.2/2.3 for that dataset.
+   dataset on the report suite and matches them to the target variable list, logging a
+   summary to the Postman Console. It does **not** return attribute/column counts itself
+   (confirmed live — see caveats below) — copy a matched `datasetId` into the environment
+   variable of the same name (2.1 auto-fills it with the first match) and run 2.2/2.3 per
+   dataset for that. With 17 target variables, running 2.2/2.3 through Postman's
+   **Collection Runner** with a CSV of `targetVar,datasetId` rows (ask for one to be
+   generated from your 2.1 results) is much faster than 17 manual copy/paste cycles.
 3. **3. Data Flow Check (Reporting)** — 3.1 finds each target variable's classification
    dimension(s); 3.2 runs a 90-day report against one and flags whether real classified
    values come back or everything is unspecified/blank.
@@ -37,17 +40,20 @@ there, not just left in the raw response bodies.
 
 ## Known caveats
 
-- The exact JSON field names returned by `/classifications/datasets/compatibilityMetrics/{rsid}`
-  and `/classifications/datasets/{datasetId}` aren't documented in Adobe's public API
-  reference in enough detail to hardcode with certainty, and couldn't be verified live
-  from the environment this collection was built in (no credentials/network access to
-  Adobe there). The endpoints themselves are confirmed real (pulled from the
-  [aanalytics2](https://github.com/pitchmuc/adobe-analytics-api-2.0) Python client's
-  source). The 2.1 test script tries several likely field names and dumps the raw first
-  item if nothing matches — adjust the `shortCode()`/`attrCount()` helpers in that
-  request's Tests tab once you see the real shape.
-- `evar66` and `evar70` don't appear at all in the current live `/dimensions` list for
-  this account (only `evar65`/`evar67` and `prop70` exist nearby). Worth confirming
-  against the SDR directly — they may have been removed, renamed, or never implemented,
-  independent of whether classification data is flowing.
+- `/classifications/datasets/compatibilityMetrics/{rsid}`'s response shape is now
+  confirmed live (2026-09-17, `royalcaribbeanprod`): `{ report_suite_id, metrics: [{ id:
+  [...shortCodes], datasets: [...datasetIds] }] }`. All 17 target variables came back
+  with a dataset ID — the schema-level "does a classification dataset exist" question is
+  answered yes for all of them on this suite.
+- `/classifications/datasets/{datasetId}`'s exact field names (for the actual attribute/
+  column list) are still unverified against a live response — the endpoint itself is
+  confirmed real (pulled from the [aanalytics2](https://github.com/pitchmuc/adobe-analytics-api-2.0)
+  Python client's source), but adjust 2.2's Tests script once you see the real shape if
+  the logged column count comes back `undefined`.
+- **evar66 and evar70 have live classification datasets** (`65a8fe7e43e2c836cb84c745` and
+  `65a8cef442af6f5b8b4c5d98`) despite **neither appearing in the account's live
+  `/dimensions` list at all** (only `evar65`/`evar67` and `prop70` exist nearby there).
+  That's a real finding for the audit, independent of whether classification data is
+  flowing: a classification config exists for a variable that isn't currently a
+  reportable dimension. Worth raising with whoever owns the SDR.
 - `listvar2` in the SDR's shorthand maps to the real dimension id `variables/listvariable2`.
