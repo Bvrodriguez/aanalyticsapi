@@ -23,11 +23,13 @@ and surfaces the live "# of Attributes" per variable so it can be diffed against
 2. **2. Classification Schema & Attribute Counts** — 2.1 lists every classification
    dataset on the report suite and matches them to the target variable list, logging a
    summary to the Postman Console. It does **not** return attribute/column counts itself
-   (confirmed live — see caveats below) — copy a matched `datasetId` into the environment
-   variable of the same name (2.1 auto-fills it with the first match) and run 2.2/2.3 per
-   dataset for that. With 17 target variables, running 2.2/2.3 through Postman's
-   **Collection Runner** with a CSV of `targetVar,datasetId` rows (ask for one to be
-   generated from your 2.1 results) is much faster than 17 manual copy/paste cycles.
+   (confirmed live — see caveats below). **2.2's After-response script batch-fetches all
+   17 known datasetIds itself via `pm.sendRequest`** — just click Send on 2.2 once and
+   read the Console; no per-dataset copy/paste needed. (Collection Runner + a CSV data
+   file would also work, but data-file iteration is gated behind a paid plan on some
+   Postman accounts — `pm.sendRequest` isn't, so that's the reliable free path and what's
+   actually wired into 2.2 now.) 2.3 still needs `datasetId` set manually per dataset if
+   you want the raw TSV template view too.
 3. **3. Data Flow Check (Reporting)** — 3.1 finds each target variable's classification
    dimension(s); 3.2 runs a 90-day report against one and flags whether real classified
    values come back or everything is unspecified/blank.
@@ -45,11 +47,10 @@ there, not just left in the raw response bodies.
   [...shortCodes], datasets: [...datasetIds] }] }`. All 17 target variables came back
   with a dataset ID — the schema-level "does a classification dataset exist" question is
   answered yes for all of them on this suite.
-- `/classifications/datasets/{datasetId}`'s exact field names (for the actual attribute/
-  column list) are still unverified against a live response — the endpoint itself is
-  confirmed real (pulled from the [aanalytics2](https://github.com/pitchmuc/adobe-analytics-api-2.0)
-  Python client's source), but adjust 2.2's Tests script once you see the real shape if
-  the logged column count comes back `undefined`.
+- `/classifications/datasets/{datasetId}` is confirmed live too — all 17 target
+  variables returned a real attribute/column count (no "unknown shape" fallback), so the
+  guessed field name (one of `columns`/`schema`/`fields`/`attributes`) was correct for
+  this account. See the Results table below.
 - **evar66 and evar70 have live classification datasets** (`65a8fe7e43e2c836cb84c745` and
   `65a8cef442af6f5b8b4c5d98`) despite **neither appearing in the account's live
   `/dimensions` list at all** (only `evar65`/`evar67` and `prop70` exist nearby there).
@@ -57,3 +58,32 @@ there, not just left in the raw response bodies.
   flowing: a classification config exists for a variable that isn't currently a
   reportable dimension. Worth raising with whoever owns the SDR.
 - `listvar2` in the SDR's shorthand maps to the real dimension id `variables/listvariable2`.
+
+## Results (royalcaribbeanprod, 2026-09-17)
+
+Live attribute counts, ready to diff against the SDR:
+
+| Variable | Attribute count |
+|---|---|
+| evar13 | 5 |
+| evar14 | 3 |
+| evar26 | 2 |
+| evar32 | 11 |
+| evar38 | 7 |
+| evar50 | 2 |
+| evar52 | 1 |
+| evar58 | 17 |
+| evar62 | 1 |
+| evar66 | 2 |
+| evar69 | 1 |
+| evar70 | 1 |
+| evar77 | 1 |
+| evar87 | 10 |
+| listvar2 | 3 |
+| prop55 | 2 |
+| tntbase | 13 |
+
+`evar58` at 17 attributes stands out next to everything else in the 1-13 range, and
+`evar52`/`evar62`/`evar69`/`evar70`/`evar77` sitting at exactly 1 attribute each are worth
+confirming that's intentional rather than a stub/incomplete classification set —
+independent of whatever the SDR says these should be.
