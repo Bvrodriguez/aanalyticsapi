@@ -30,9 +30,13 @@ and surfaces the live "# of Attributes" per variable so it can be diffed against
    Postman accounts — `pm.sendRequest` isn't, so that's the reliable free path and what's
    actually wired into 2.2 now.) 2.3 still needs `datasetId` set manually per dataset if
    you want the raw TSV template view too.
-3. **3. Data Flow Check (Reporting)** — 3.1 finds each target variable's classification
-   dimension(s); 3.2 runs a 90-day report against one and flags whether real classified
-   values come back or everything is unspecified/blank.
+3. **3. Data Flow Check (Reporting)** — 3.1 finds one representative classification
+   dimension per target variable (a variable can have many attribute-dimensions - evar58
+   had 17 - so only the first is kept to keep the next step to ~17 calls). **3.2 batch-
+   checks all of them itself via `pm.sendRequest`**, same single-click pattern as 2.2: run
+   3.1 once, then click Send on 3.2 once, and read the Console for a 90-day report per
+   variable flagging `flowing` / `not-flowing` (rows exist but all unspecified/blank) /
+   `no-traffic` (no rows at all in the window).
 4. **4. Confirm via Export (optional)** — heavier but definitive: creates a small
    classification export job and reads back actual key → value rows.
 
