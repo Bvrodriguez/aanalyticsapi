@@ -368,7 +368,8 @@
                 "exec": [
                   "const end = new Date();",
                   "const start = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);",
-                  "const iso = d => d.toISOString().replace(/\\.\\d+Z$/, '.000Z');",
+                  "// Adobe's dateRange wants \"YYYY-MM-DDTHH:MM\" - no seconds, no milliseconds, no Z/timezone.",
+                  "const iso = d => d.toISOString().slice(0, 16);",
                   "pm.environment.set('dateRangeStart', iso(start));",
                   "pm.environment.set('dateRangeEnd', iso(end));"
                 ]
